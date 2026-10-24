@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openlufs"
+version = "1.2.1"
+description = "Measured and verified audio loudness normalization"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+dependencies = ["PyQt6==6.11.0", "mutagen==1.48.1", "numpy==2.3.5"]
+
+[project.gui-scripts]
+openlufs = "openlufs.gui:launch"
+
+[project.scripts]
+openlufs-cli = "openlufs.cli:main"
+
+[tool.setuptools]
+packages = ["openlufs"]
+
+[tool.setuptools.package-data]
+openlufs = ["resources/assets/*"]

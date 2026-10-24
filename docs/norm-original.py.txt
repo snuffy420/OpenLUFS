@@ -1,0 +1,581 @@
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing
+import os
+from pathlib import Path
+import queue
+import shutil
+import subprocess
+import sys
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+import uuid
+import warnings
+import numpy as np
+import soundfile as sf
+from mutagen.wave import WAVE
+
+# Try importing professional C++ Essentia MIR library, fallback to librosa if unavailable
+try:
+    import essentia.standard as es
+    HAS_ESSENTIA = True
+except ImportError:
+    HAS_ESSENTIA = False
+    import librosa
+
+# Suppress warnings
+warnings.filterwarnings("ignore")
+
+
+def worker_process(task):
+    """Top-level professional worker function for ProcessPoolExecutor parallelization."""
+    src_file, dest_file, file_name, target_lufs, match_bpm, target_bpm, normalize_audio, progress_str = task
+    ext = src_file.lower().split(".")[-1]
+    
+    dest_path_obj = Path(dest_file)
+    temp_dest = str(dest_path_obj.parent / f"{uuid.uuid4().hex}.wav")
+
+    logs = []
+    analysis_details = []
+
+    try:
+        # Extract exact source audio properties (Sample Rate, Channels, Bit Depth) to preserve 1:1 fidelity
+        src_samplerate = 44100
+        src_channels = 2
+        pcm_codec = "pcm_s24le"
+
+        try:
+            info = sf.info(src_file)
+            src_samplerate = info.samplerate
+            src_channels = info.channels
+            sub = info.subtype.upper()
+            if "16" in sub:
+                pcm_codec = "pcm_s16le"
+            elif "32" in sub:
+                pcm_codec = "pcm_s32le"
+            else:
+                pcm_codec = "pcm_s24le"
+            analysis_details.append(f"Format: {info.samplerate}Hz/{info.channels}ch/{sub}")
+        except Exception:
+            pass
+
+        # 1. High-Precision BPM & Musical Key Analysis via Essentia (C++) or Librosa Fallback
+        detected_bpm = 0.0
+        detected_key_str = ""
+
+        if HAS_ESSENTIA:
+            try:
+                loader = es.MonoLoader(filename=src_file, sampleRate=44100)
+                audio = loader()
+                
+                rhythm_extractor = es.RhythmExtractor2013()
+                bpm, beats, confidence, estimates, beats_confidence = rhythm_extractor(audio)
+                detected_bpm = float(bpm)
+
+                key_extractor = es.KeyExtractor()
+                key, scale, key_conf = key_extractor(audio)
+                detected_key_str = f" | Key: {key} {scale}"
+            except Exception:
+                pass
+
+        if detected_bpm <= 0:
+            try:
+                y, sr = librosa.load(src_file, sr=22050, mono=True)
+                tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+                detected_bpm = float(np.atleast_1d(tempo)[0])
+            except Exception:
+                pass
+
+        tempo_factor = 1.0
+        apply_tempo_stretch = False
+
+        if match_bpm and detected_bpm > 0:
+            candidates = [detected_bpm / 2.0, detected_bpm, detected_bpm * 2.0]
+            valid_candidates = [c for c in candidates if 70.0 <= c <= 210.0]
+            if not valid_candidates:
+                valid_candidates = [detected_bpm]
+
+            # Intelligent Electronic Music Tempo Selector:
+            # Weighs candidate octaves against standard dance music hubs (House/Trance ~128, DnB ~174)
+            # This completely stops half-time DnB misreads (e.g. 86 BPM -> correctly promoted to 172 BPM)
+            def score_candidate(c):
+                dist_128 = abs(c - 128.0)
+                dist_174 = abs(c - 174.0)
+                genre_distance = min(dist_128, dist_174)
+                
+                ratio = target_bpm / c
+                stretch_penalty = 0.0 if (0.5 <= ratio <= 2.0) else 100.0
+                return genre_distance + stretch_penalty
+
+            current_bpm = min(valid_candidates, key=score_candidate)
+
+            if abs(current_bpm - target_bpm) > 0.5:
+                tempo_factor = target_bpm / current_bpm
+                if 0.5 <= tempo_factor <= 2.0:
+                    apply_tempo_stretch = True
+                    analysis_details.append(f"BPM: {current_bpm:.1f} -> {target_bpm:.1f} (Rubber Band)")
+                else:
+                    analysis_details.append(f"BPM ratio out of bounds")
+            else:
+                analysis_details.append(f"BPM already at {target_bpm:.1f}")
+
+        # 2. Build Professional FFmpeg Filter Graph
+        filter_chains = []
+
+        if apply_tempo_stretch:
+            # Optimized specifically for electronic music (House, Trance, DnB):
+            # - window=short: Preserves punchy transients and eliminates watery pre-echo on rapid percussion.
+            # - transients=crisp: Protects hard kicks, snares, and hats from smearing.
+            # - detector=percussive: Focuses analysis on rhythm and transient peaks.
+            # - phase=independent & channels=apart: Keeps stereo imaging wide, clean, and unpolluted.
+            filter_chains.append(f"rubberband=tempo={tempo_factor:.4f}:transients=crisp:detector=percussive:window=short:phase=independent:channels=apart")
+
+        if normalize_audio:
+            filter_chains.append(f"loudnorm=I={target_lufs}:TP=-1.0:LRA=11")
+            filter_chains.append("alimiter=limit=0.891")
+            analysis_details.append(f"Normalized to {target_lufs} LUFS")
+
+        filter_arg = ["-af", ",".join(filter_chains)] if filter_chains else []
+
+        # 3. Construct Industrial FFmpeg Command Pipeline with Locked Sample Rate & Bit Depth
+        os.makedirs(os.path.dirname(dest_file), exist_ok=True)
+        target_out = temp_dest if ext == "wav" else dest_file
+
+        ffmpeg_cmd = ["ffmpeg", "-y", "-threads", "0", "-i", src_file] + filter_arg
+
+        if ext == "mp3":
+            ffmpeg_cmd += ["-codec:a", "libmp3lame", "-b:a", "320k", "-ar", str(src_samplerate), "-ac", str(src_channels), target_out]
+        elif ext == "flac":
+            ffmpeg_cmd += ["-codec:a", "flac", "-ar", str(src_samplerate), "-ac", str(src_channels), target_out]
+        elif ext in ("aif", "aiff"):
+            ffmpeg_cmd += ["-codec:a", "pcm_s16be", "-ar", str(src_samplerate), "-ac", str(src_channels), target_out]
+        else:
+            ffmpeg_cmd += ["-codec:a", pcm_codec, "-ar", str(src_samplerate), "-ac", str(src_channels), target_out]
+
+        result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
+        if result.returncode != 0:
+            logs.append(f"{progress_str} [FFmpeg Error] {file_name}: {result.stderr.strip()[-250:]}")
+            return False, logs
+
+        # 4. Handle WAV Tag/Artwork Preservation via Mutagen
+        if ext == "wav":
+            if os.path.exists(dest_file):
+                os.remove(dest_file)
+            os.rename(temp_dest, dest_file)
+
+            try:
+                original_audio = WAVE(src_file)
+                if original_audio.tags is not None:
+                    new_audio = WAVE(dest_file)
+                    if new_audio.tags is None:
+                        new_audio.add_tags()
+                    new_audio.tags = original_audio.tags
+                    new_audio.save()
+            except Exception as tag_err:
+                logs.append(f"{progress_str} [Tag Warning] {file_name}: {tag_err}")
+
+        detail_str = f" | {', '.join(analysis_details)}" if analysis_details else ""
+        logs.append(f"{progress_str} [Processed Pro] {file_name}{detail_str}{detected_key_str}")
+        return True, logs
+
+    except Exception as e:
+        logs.append(f"{progress_str} [Error] {file_name}: {str(e)}")
+        return False, logs
+    finally:
+        if os.path.exists(temp_dest):
+            try:
+                os.remove(temp_dest)
+            except:
+                pass
+
+
+class DJNormalizerApp:
+
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Professional DJ Audio Mastering Suite (Essentia & Rubber Band Engine)")
+        self.root.geometry("780x780")
+        self.root.minsize(700, 650)
+        self.root.configure(bg="#1e1e1e")
+
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.setup_styles()
+
+        self.source_mode = None
+        self.source_folder = ""
+        self.source_files = []
+
+        self.log_queue = queue.Queue()
+        self.cancel_event = threading.Event()
+        self.current_executor = None
+
+        self.create_widgets()
+        self.poll_log_queue()
+
+    def setup_styles(self):
+        style = ttk.Style()
+        style.theme_use("clam")
+
+        DARK_BG = "#1e1e1e"
+        FG_COLOR = "#d4d4d4"
+        ACCENT_COLOR = "#007acc"
+        ENTRY_BG = "#2d2d2d"
+        BORDER_COLOR = "#3f3f46"
+
+        style.configure(".", background=DARK_BG, foreground=FG_COLOR, troughcolor=ENTRY_BG)
+        style.configure("TFrame", background=DARK_BG)
+        style.configure("TLabelframe", background=DARK_BG, bordercolor=BORDER_COLOR, relief="solid")
+        style.configure("TLabelframe.Label", background=DARK_BG, foreground="#ffffff", font=("Segoe UI", 10, "bold"))
+        style.configure("TLabel", background=DARK_BG, foreground=FG_COLOR, font=("Segoe UI", 9))
+        style.configure("Header.TLabel", background=DARK_BG, foreground="#ffffff", font=("Segoe UI", 10, "bold"))
+
+        style.configure(
+            "TButton",
+            background="#333333",
+            foreground="#ffffff",
+            bordercolor=BORDER_COLOR,
+            focuscolor=ACCENT_COLOR,
+            font=("Segoe UI", 9),
+            padding=6,
+        )
+        style.map("TButton", background=[("active", "#3e3e42"), ("pressed", "#2d2d2d")], foreground=[("active", "#ffffff")])
+        
+        style.configure("Accent.TButton", background="#1b5e20", foreground="#ffffff", font=("Segoe UI", 10, "bold"))
+        style.map("Accent.TButton", background=[("active", "#2e7d32"), ("pressed", "#0d3b10")])
+
+        style.configure("Stop.TButton", background="#b71c1c", foreground="#ffffff", font=("Segoe UI", 10, "bold"))
+        style.map("Stop.TButton", background=[("active", "#c62828"), ("pressed", "#7f0000")])
+
+        style.configure("TCheckbutton", background=DARK_BG, foreground=FG_COLOR, font=("Segoe UI", 9))
+        style.map("TCheckbutton", background=[("active", DARK_BG)], foreground=[("active", "#ffffff")])
+
+        style.configure("TEntry", fieldbackground=ENTRY_BG, foreground="#ffffff", insertcolor="#ffffff", padding=4)
+        style.configure("TSpinbox", fieldbackground=ENTRY_BG, foreground="#ffffff", insertcolor="#ffffff", arrowcolor="#ffffff")
+
+    def create_widgets(self):
+        main_frame = ttk.Frame(self.root, padding=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(main_frame, text="Source Selection:", style="Header.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 5))
+
+        src_btn_frame = ttk.Frame(main_frame)
+        src_btn_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 5))
+
+        ttk.Button(src_btn_frame, text="Select Folder...", command=self.browse_source_folder).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(src_btn_frame, text="Select Files...", command=self.browse_source_files).pack(side=tk.LEFT)
+
+        self.src_path_var = tk.StringVar(value="No folder or files selected...")
+        src_entry = ttk.Entry(main_frame, textvariable=self.src_path_var, state="readonly", width=65)
+        src_entry.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 15))
+
+        ttk.Label(main_frame, text="Destination Output Folder:", style="Header.TLabel").grid(row=3, column=0, sticky="w", pady=(0, 5))
+
+        self.dest_path_var = tk.StringVar()
+        dest_entry = ttk.Entry(main_frame, textvariable=self.dest_path_var, width=55)
+        dest_entry.grid(row=4, column=0, sticky="ew", padx=(0, 10))
+        ttk.Button(main_frame, text="Browse...", command=self.browse_dest).grid(row=4, column=1)
+
+        settings_frame = ttk.LabelFrame(main_frame, text="Professional Mastering & Processing Engine", padding=12)
+        settings_frame.grid(row=5, column=0, columnspan=2, sticky="ew", pady=15)
+        settings_frame.columnconfigure(1, weight=1)
+
+        self.normalize_var = tk.BooleanVar(value=True)
+        normalize_chk = ttk.Checkbutton(
+            settings_frame,
+            text="Enable EBU R128 Broadcast Loudness Normalization & True-Peak Limiter",
+            variable=self.normalize_var,
+            command=self.toggle_normalize_state,
+        )
+        normalize_chk.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+
+        ttk.Label(settings_frame, text="Target Loudness (LUFS):").grid(row=1, column=0, sticky="w", padx=(20, 10), pady=4)
+        self.lufs_var = tk.DoubleVar(value=-10.0)
+        self.lufs_spin = ttk.Spinbox(settings_frame, from_=-24.0, to=-6.0, increment=0.5, textvariable=self.lufs_var, width=8)
+        self.lufs_spin.grid(row=1, column=1, sticky="w", pady=4)
+        ttk.Label(settings_frame, text="(Club standard: -10 to -12 LUFS)", foreground="#858585").grid(row=1, column=2, sticky="w", padx=10, pady=4)
+
+        self.match_bpm_var = tk.BooleanVar(value=False)
+        match_bpm_chk = ttk.Checkbutton(
+            settings_frame,
+            text="Enable Phase-Locked Time-Stretching (Rubber Band Engine)",
+            variable=self.match_bpm_var,
+            command=self.toggle_bpm_state,
+        )
+        match_bpm_chk.grid(row=2, column=0, columnspan=3, sticky="w", pady=(14, 4))
+
+        bpm_sub_frame = ttk.Frame(settings_frame)
+        bpm_sub_frame.grid(row=3, column=0, columnspan=3, sticky="w", padx=(20, 0), pady=(0, 4))
+
+        ttk.Label(bpm_sub_frame, text="Target BPM:").pack(side=tk.LEFT, padx=(0, 10))
+        self.target_bpm_var = tk.DoubleVar(value=128.0)
+        self.bpm_spin = ttk.Spinbox(bpm_sub_frame, from_=70.0, to=210.0, increment=0.5, textvariable=self.target_bpm_var, width=8, state=tk.DISABLED)
+        self.bpm_spin.pack(side=tk.LEFT)
+        ttk.Label(bpm_sub_frame, text="(Transient-preserving algorithm)", foreground="#858585").pack(side=tk.LEFT, padx=10)
+
+        self.include_sub_var = tk.BooleanVar(value=True)
+        include_sub_chk = ttk.Checkbutton(
+            settings_frame,
+            text="Include Nested Subfolders (Recursive scan)",
+            variable=self.include_sub_var,
+            command=self.toggle_mirror_state,
+        )
+        include_sub_chk.grid(row=4, column=0, columnspan=3, sticky="w", pady=(14, 4))
+
+        self.mirror_var = tk.BooleanVar(value=True)
+        self.mirror_chk = ttk.Checkbutton(settings_frame, text="Mirror Subfolder Structure in Destination", variable=self.mirror_var)
+        self.mirror_chk.grid(row=5, column=0, columnspan=3, sticky="w", pady=(2, 0))
+
+        btn_action_frame = ttk.Frame(main_frame)
+        btn_action_frame.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 15))
+        btn_action_frame.columnconfigure(0, weight=1)
+        btn_action_frame.columnconfigure(1, weight=1)
+
+        self.start_btn = ttk.Button(
+            btn_action_frame,
+            text="START MULTI-CORE PROCESSING",
+            style="Accent.TButton",
+            command=self.start_processing_thread,
+        )
+        self.start_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+
+        self.stop_btn = ttk.Button(
+            btn_action_frame,
+            text="STOP PROCESSING",
+            style="Stop.TButton",
+            command=self.stop_processing,
+            state=tk.DISABLED,
+        )
+        self.stop_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
+
+        ttk.Label(main_frame, text="Processing Terminal Log:", style="Header.TLabel").grid(row=7, column=0, sticky="w")
+
+        log_frame = ttk.Frame(main_frame)
+        log_frame.grid(row=8, column=0, columnspan=2, sticky="nsew")
+        main_frame.rowconfigure(8, weight=1)
+        main_frame.columnconfigure(0, weight=1)
+
+        self.log_text = tk.Text(
+            log_frame,
+            wrap=tk.WORD,
+            height=10,
+            bg="#121212",
+            fg="#00e676",
+            insertbackground="#ffffff",
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground="#3f3f46",
+            font=("Consolas", 9),
+        )
+        scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=scrollbar.set)
+
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+    def toggle_normalize_state(self):
+        if self.normalize_var.get():
+            self.lufs_spin.config(state=tk.NORMAL)
+        else:
+            self.lufs_spin.config(state=tk.DISABLED)
+
+    def toggle_mirror_state(self):
+        if not self.include_sub_var.get():
+            self.mirror_chk.config(state=tk.DISABLED)
+        else:
+            self.mirror_chk.config(state=tk.NORMAL)
+
+    def toggle_bpm_state(self):
+        if self.match_bpm_var.get():
+            self.bpm_spin.config(state=tk.NORMAL)
+        else:
+            self.bpm_spin.config(state=tk.DISABLED)
+
+    def browse_source_folder(self):
+        dir_path = filedialog.askdirectory(title="Select Source Music Folder")
+        if dir_path:
+            self.source_mode = "folder"
+            self.source_folder = dir_path
+            self.source_files = []
+            self.src_path_var.set(f"Folder: {dir_path}")
+
+    def browse_source_files(self):
+        file_paths = filedialog.askopenfilenames(
+            title="Select Audio Files",
+            filetypes=[("Audio Files", "*.mp3 *.flac *.wav *.aiff *.aif"), ("All Files", "*.*")],
+        )
+        if file_paths:
+            self.source_mode = "files"
+            self.source_files = list(file_paths)
+            self.source_folder = ""
+            self.src_path_var.set(f"Selected {len(self.source_files)} individual file(s)")
+
+    def browse_dest(self):
+        dir_path = filedialog.askdirectory(title="Select Destination Output Folder")
+        if dir_path:
+            self.dest_path_var.set(dir_path)
+
+    def log(self, message):
+        self.log_queue.put(message)
+
+    def poll_log_queue(self):
+        while not self.log_queue.empty():
+            msg = self.log_queue.get()
+            self.log_text.insert(tk.END, msg + "\n")
+            self.log_text.see(tk.END)
+        self.root.after(100, self.poll_log_queue)
+
+    def start_processing_thread(self):
+        dest = self.dest_path_var.get()
+
+        if not self.source_mode:
+            messagebox.showerror("Error", "Please select a source folder or individual files first.")
+            return
+        if not dest:
+            messagebox.showerror("Error", "Please select a destination folder.")
+            return
+
+        self.start_btn.config(state=tk.DISABLED)
+        self.stop_btn.config(state=tk.NORMAL)
+        self.cancel_event.clear()
+
+        threading.Thread(target=self.process_batch, args=(dest,), daemon=True).start()
+
+    def stop_processing(self):
+        self.cancel_event.set()
+        if self.current_executor:
+            try:
+                self.current_executor.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+        self.log(">>> Abort signal received. Terminating batch tasks...")
+        self.stop_btn.config(state=tk.DISABLED)
+
+    def process_batch(self, dest_root):
+        target_lufs = self.lufs_var.get()
+        normalize_audio = self.normalize_var.get()
+        match_bpm = self.match_bpm_var.get()
+        target_bpm = self.target_bpm_var.get()
+        include_sub = self.include_sub_var.get()
+        mirror = self.mirror_var.get()
+        supported_exts = (".mp3", ".flac", ".wav", ".aiff", ".aif")
+
+        all_tasks = []
+        seen_dest_files = set()
+
+        if self.source_mode == "folder":
+            src_root = self.source_folder
+            if include_sub:
+                walk_target = os.walk(src_root)
+            else:
+                try:
+                    top_files = [f for f in os.listdir(src_root) if os.path.isfile(os.path.join(src_root, f))]
+                    walk_target = [(src_root, [], top_files)]
+                except Exception:
+                    walk_target = []
+
+            for root, dirs, files in walk_target:
+                rel_path = os.path.relpath(root, src_root)
+                if mirror and include_sub:
+                    dest_dir = os.path.join(dest_root, rel_path) if rel_path != "." else dest_root
+                else:
+                    dest_dir = dest_root
+
+                for file in files:
+                    if file.lower().endswith(supported_exts):
+                        src_file = os.path.join(root, file)
+                        base_dest_file = os.path.join(dest_dir, file)
+
+                        dest_file = base_dest_file
+                        if not mirror or not include_sub:
+                            counter = 1
+                            root_name, ext = os.path.splitext(file)
+                            while dest_file in seen_dest_files or os.path.exists(dest_file):
+                                dest_file = os.path.join(dest_dir, f"{root_name}_{counter}{ext}")
+                                counter += 1
+                            seen_dest_files.add(dest_file)
+
+                        all_tasks.append((src_file, dest_file, file))
+
+        elif self.source_mode == "files":
+            for src_file in self.source_files:
+                if src_file.lower().endswith(supported_exts):
+                    file = os.path.basename(src_file)
+                    dest_file = os.path.join(dest_root, file)
+                    all_tasks.append((src_file, dest_file, file))
+
+        total_files = len(all_tasks)
+        if total_files == 0:
+            self.log("[Error] No supported audio files discovered.")
+            self.root.after(0, lambda: self.start_btn.config(state=tk.NORMAL))
+            self.root.after(0, lambda: self.stop_btn.config(state=tk.DISABLED))
+            return
+
+        mode_parts = []
+        mode_parts.append(f"Engine: Essentia + Rubber Band")
+        if normalize_audio:
+            mode_parts.append(f"Target: {target_lufs} LUFS")
+        if match_bpm:
+            mode_parts.append(f"Target BPM: {target_bpm}")
+        mode_str = " | ".join(mode_parts)
+
+        self.log(f"=== Starting Professional Batch: {total_files} tracks found ({mode_str}) ===")
+
+        processed_count = 0
+        success_count = 0
+
+        process_tasks = [
+            (src, dest, name, target_lufs, match_bpm, target_bpm, normalize_audio, f"[{i+1}/{total_files}]")
+            for i, (src, dest, name) in enumerate(all_tasks)
+        ]
+
+        max_workers = os.cpu_count() or 4
+        
+        try:
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                self.current_executor = executor
+                futures = {executor.submit(worker_process, task): task for task in process_tasks}
+                
+                for future in as_completed(futures):
+                    if self.cancel_event.is_set():
+                        break
+                    processed_count += 1
+                    try:
+                        success, logs = future.result()
+                        if success:
+                            success_count += 1
+                        for l in logs:
+                            self.log(l)
+                    except Exception as e:
+                        self.log(f"[Process Error] {e}")
+        except Exception as ex:
+            if not self.cancel_event.is_set():
+                self.log(f"[Execution Exception] {ex}")
+
+        self.current_executor = None
+
+        if self.cancel_event.is_set():
+            self.log(f"\n=== Batch processing cancelled by user. Successfully processed {success_count} of {total_files} tracks before abort. ===")
+            self.root.after(0, lambda: messagebox.showwarning("Cancelled", "Batch processing was aborted."))
+        else:
+            self.log(f"\n=== Completed! Successfully processed {success_count} of {total_files} tracks. ===")
+            self.root.after(0, lambda: messagebox.showinfo("Done", f"Batch complete! Successfully processed {success_count} of {total_files} tracks."))
+
+        self.root.after(0, lambda: self.start_btn.config(state=tk.NORMAL))
+        self.root.after(0, lambda: self.stop_btn.config(state=tk.DISABLED))
+
+    def on_closing(self):
+        try:
+            self.cancel_event.set()
+            if self.current_executor:
+                self.current_executor.shutdown(wait=False, cancel_futures=True)
+            self.root.destroy()
+        except Exception:
+            pass
+        os._exit(0)
+
+
+if __name__ == "__main__":
+    multiprocessing.freeze_support()
+    root = tk.Tk()
+    app = DJNormalizerApp(root)
+    root.mainloop()
