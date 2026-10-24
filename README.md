@@ -6,8 +6,6 @@ OpenLUFS adjusts the loudness of audio files while keeping their original format
 
 Download the Windows portable package, extract it, and run **OpenLUFS.exe**. Python, Qt and the audio tools are included. The executable runs without installation.
 
-The `.7z` downloads need a compatible archive extractor to unpack them. **7-Zip is not required by OpenLUFS itself.** Windows 10/11 x64 is the intended platform. The executable is unsigned.
-
 ## Processing tracks
 
 ![OpenLUFS with generated test tracks and Preview available](docs/screenshot-settings.png)
