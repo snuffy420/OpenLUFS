@@ -4,12 +4,14 @@ os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 from pathlib import Path
 import sys
 import tempfile
+import shutil
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 sys.path.insert(0,str(ROOT/'tests'))
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QEventLoop,QTimer
 from PyQt6.QtGui import QFontDatabase
+from openlufs import __version__
 from openlufs.gui import MainWindow
 from openlufs.theme import STYLE
 from test_audio import tone
@@ -100,4 +102,8 @@ for index,name in [(0,'about'),(1,'help'),(2,'donate')]:
 about.reject()
 window.closing=False
 window.close()
-print('Captured empty library and verified results screenshots')
+versioned=ROOT/'docs/screenshots'/__version__
+versioned.mkdir(parents=True,exist_ok=True)
+for capture in (ROOT/'docs').glob('screenshot-*.png'):
+    shutil.copy2(capture,versioned/capture.name)
+print('Captured and versioned verified screenshots:',versioned)

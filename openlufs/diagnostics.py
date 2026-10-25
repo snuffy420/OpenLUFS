@@ -53,7 +53,7 @@ def run(destination):
         from .gui import MainWindow
         from .theme import STYLE
         app=QApplication.instance() or QApplication([]); app.setStyle('Fusion'); app.setStyleSheet(STYLE)
-        window=MainWindow(); report['qt']=True; report['assets']=not window.windowIcon().isNull()
+        window=MainWindow(); report['preferences_location']=str(window.config_path); report['qt']=True; report['assets']=not window.windowIcon().isNull()
         report['window_chrome']=(not window.custom_chrome or hasattr(window,'title_bar') and len(window.window_chrome.handles)==8)
         report['ok']=report['ok'] and report['assets'] and report['window_chrome']; window.deleteLater(); app.processEvents()
         app.setQuitOnLastWindowClosed(False)

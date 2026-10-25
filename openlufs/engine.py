@@ -47,6 +47,21 @@ def find_ffmpeg():
         return installed
     raise RuntimeError("FFmpeg was not found. Run tools/fetch_ffmpeg.py or set OPENLUFS_FFMPEG.")
 
+def find_gain_tool(platform_name=None):
+    platform_name=platform_name or sys.platform
+    override=os.environ.get('OPENLUFS_MP3RGAIN')
+    if override:
+        path=Path(override).expanduser().resolve()
+        if not path.is_file():raise RuntimeError('OPENLUFS_MP3RGAIN does not point to a file.')
+        return path
+    name='mp3rgain.exe' if platform_name=='win32' else 'mp3rgain'
+    bundled=resource_path('vendor/'+name)
+    if bundled.is_file():return bundled
+    installed=shutil.which('mp3rgain')
+    if installed:return Path(installed)
+    raise RuntimeError('mp3rgain was not found. Run python tools/fetch_mp3rgain.py, install mp3rgain on PATH, or set OPENLUFS_MP3RGAIN.')
+
+
 class Engine:
     def __init__(self, cancel=None, executable=None, threads=2):
         self.cancel = cancel if cancel is not None else threading.Event()
@@ -190,8 +205,7 @@ class Engine:
         peak_constrained=gain<requested-0.100001
         steps=None
         if direct or opus:
-            tool=resource_path('vendor/mp3rgain.exe' if os.name=='nt' else 'vendor/mp3rgain')
-            if direct and not tool.is_file(): raise RuntimeError('The bundled lossless MP3/AAC gain tool is missing.')
+            tool=find_gain_tool() if direct else None
             steps=min(round(requested/step_db),math.floor((settings.ceiling-before.true_peak)/step_db))
             gain=steps*step_db
             peak_constrained=steps<round(requested/step_db)

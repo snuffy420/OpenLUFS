@@ -3,5 +3,22 @@
   "url": "https://github.com/M-Igashi/mp3rgain/releases/download/v3.12.1/mp3rgain-v3.12.1-windows-x86_64.zip",
   "archive_sha256": "c8610a49e3e5150557a1374fd0bb7332385f8f0784fd308fdf8f78ffbc397976",
   "sha256": "be66f44bc4e5cf852b3c8b2dc0a50a22a41c3c8f61da357b4f78c8ce5a5877fd",
-  "source": "https://github.com/M-Igashi/mp3rgain/tree/v3.12.1"
+  "source": "https://github.com/M-Igashi/mp3rgain/tree/v3.12.1",
+  "platforms": {
+    "linux-x86_64": {
+      "url": "https://github.com/M-Igashi/mp3rgain/releases/download/v3.12.1/mp3rgain-v3.12.1-linux-x86_64.tar.gz",
+      "archive_sha256": "1dbb156b942feb78a8d2bd1c7fa85754afd7c87a18b48cdce5329c305d4ebae8",
+      "sha256": "7aade72dbb13ec7297e20644ea1217cae217f4296a9543de4e410855bf5a40cb"
+    },
+    "linux-aarch64": {
+      "url": "https://github.com/M-Igashi/mp3rgain/releases/download/v3.12.1/mp3rgain-v3.12.1-linux-arm64.tar.gz",
+      "archive_sha256": "165d70d8599a9d00366485bf23cdf83e58feefa9b25a8793c4b4641cee6b82ab",
+      "sha256": "5dab6ece60b2eca6aa2728751e8c57ecd06c243f3cd75c9a5a4f3a3e3916ad8d"
+    },
+    "darwin-universal": {
+      "url": "https://github.com/M-Igashi/mp3rgain/releases/download/v3.12.1/mp3rgain-v3.12.1-macos-universal.tar.gz",
+      "archive_sha256": "008f96cb8240c4b355b514cec5573d75a96789f05b14a85efe50aca54f29221a",
+      "sha256": "441f957c2d3a34feee34a1b6c186e30c819e8dd027e83f306f3c76b6405c863c"
+    }
+  }
 }

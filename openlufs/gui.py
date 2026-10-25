@@ -85,8 +85,8 @@ class MainWindow(QMainWindow):
         self._loading_settings = True
         self.preview_style = "Normal"
         base = Path(sys.executable).parent if getattr(sys, "frozen", False) else resource_path("")
-        self.config_path = (Path.home()/"Library/Application Support/OpenLUFS/settings.json"
-                            if sys.platform == "darwin" else base/"OpenLUFS.settings.json")
+        from .paths import settings_path
+        self.config_path=settings_path(base)
         self.build_ui()
         if self.custom_chrome:
             from .window_chrome import WindowChrome

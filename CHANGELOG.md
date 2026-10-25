@@ -4,6 +4,11 @@
 
 ### Added
 
+- Branded native Windows x64 installer with Program Files installation, optional desktop shortcut, Start menu entries and Add/Remove Programs uninstaller integration.
+- Per-user settings for installed Windows copies, retaining portable settings beside the standalone executable.
+- macOS/Linux source setup scripts with venv and genuine no-venv dependency-folder modes, native helper downloads and PATH discovery. Native platform validation remains pending.
+- MixLogic-style README header and download table, detailed beginner installation instructions and OpenLUFS-themed Formspree contact page.
+
 - A single compact, draggable main header with the full-size logo/title and toolbar; duplicate small title-bar branding has been removed.
 - Centered, compact BTC address field and a fixed footer copy confirmation; copying no longer adds a scrollbar or shifts donation content.
 - Seamless Windows title bar matching the app background, with minimize/maximize/restore/close controls, title-bar dragging and edge/corner resizing.
@@ -43,9 +48,11 @@
 
 ### Documentation and validation
 
+- README images now use versioned 1.3.0 screenshot paths, replacing the older shared image references.
+
 - Updated README, in-app Help and actual application screenshots, including ALAC test tracks, processing explanations and donations.
-- All 89 automated tests passed. Additional checks passed at 200% display scaling, through the real CLI, and inside the compiled executable, including ALAC, parallel batches, Help/donations, preview cleanup and report viewing.
+- All 95 automated tests passed, including six new platform-setup regression tests. Additional checks passed at 200% display scaling, through the real CLI, and inside the compiled executable, including ALAC, parallel batches, Help/donations, preview cleanup and report viewing.
 - Added regression coverage for ALAC depth/rate/channels, metadata/artwork/chapters, MP3 detection, real concurrent processing, cancellation, cache invalidation, report ordering, small-window layouts and exact QR/address handling.
 - A local benchmark of eight 45-second WAV/FLAC/MP3/ALAC tracks took 16.74 seconds with one worker and 4.66 seconds with four workers (about 3.6× faster). Decoded outputs were identical. Performance varies with hardware, storage, source files and settings.
 
-Release files include the Windows portable and Python source `.7z` archives, individual SHA-256 checksum files (`.sha256` and `.sha`), and `SHA256SUMS.txt`. A clean source tree is also prepared for direct GitHub upload.
+Release files include the Windows x64 installer, Windows portable and Python source `.7z` archives, individual SHA-256 checksum files (`.sha256` and `.sha`), and `SHA256SUMS.txt`. A clean source tree is also prepared for direct GitHub upload.

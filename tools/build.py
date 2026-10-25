@@ -10,8 +10,8 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from openlufs import __version__
 
-SOURCE_DIRS=['openlufs','assets','tools','tests','docs','licenses','vendor','.github']
-SOURCE_FILES=['norm.py','CHANGELOG.md','README.md','LICENSE','THIRD_PARTY_NOTICES.md','requirements.txt','requirements-build.txt','pyproject.toml','.gitignore','OpenLUFS.spec','setup.ps1','Run OpenLUFS.cmd']
+SOURCE_DIRS=['openlufs','assets','tools','tests','docs','licenses','vendor','.github','installer']
+SOURCE_FILES=['.nojekyll','setup.sh','run.sh','.gitattributes','norm.py','CHANGELOG.md','README.md','LICENSE','THIRD_PARTY_NOTICES.md','requirements.txt','requirements-build.txt','pyproject.toml','.gitignore','OpenLUFS.spec','setup.ps1','Run OpenLUFS.cmd']
 
 
 def run(*args):subprocess.run([sys.executable,*args],cwd=ROOT,check=True)
@@ -30,7 +30,7 @@ def copy_source(destination,include_binaries):
     for name in SOURCE_FILES:shutil.copy2(ROOT/name,destination/name)
     ignored=['__pycache__','*.pyc','*.pyo']
     for name in SOURCE_DIRS:
-        extras=['*.exe'] if name=='vendor' and not include_binaries else []
+        extras=['*.exe','mp3rgain','ffmpeg'] if name=='vendor' and not include_binaries else []
         shutil.copytree(ROOT/name,destination/name,ignore=shutil.ignore_patterns(*(ignored+extras)))
     return destination
 
@@ -61,6 +61,9 @@ def package():
             candidate=stage/name
             archive(tool,stage,directory.name,candidate)
             final=releases/name;os.replace(candidate,final);outputs.append(final)
+        from build_installer import build as build_installer
+        candidate=build_installer(portable,stage,__version__)
+        final=releases/candidate.name;os.replace(candidate,final);outputs.append(final)
         upload_base=ROOT/'GitHub';upload_base.mkdir(exist_ok=True)
         upload=upload_base/prefix
         suffix=2
