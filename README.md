@@ -8,7 +8,7 @@ Download the Windows portable package, extract it, and run **OpenLUFS.exe**. Pyt
 
 ## Processing tracks
 
-![OpenLUFS with generated test tracks and Preview available](docs/screenshot-settings.png)
+![OpenLUFS with generated test tracks and Preview available](docs/screenshots/1.3.0/screenshot-settings.png)
 
 1. Add files or folders, or drag them into the app.
 2. Optionally select **Analyze** to measure the inputs.
@@ -18,7 +18,7 @@ Download the Windows portable package, extract it, and run **OpenLUFS.exe**. Pyt
 
 OpenLUFS remembers your last-used settings, output folder, preview style and window size. For first use, the settings are −12 LUFS and −1 dBTP, with LUFS normalization enabled and limiting disabled. Originals and existing exports are never overwritten.
 
-![Verified results from generated test audio](docs/screenshot-results.png)
+![Verified results from generated test audio](docs/screenshots/1.3.0/screenshot-results.png)
 
 ### LUFS normalization
 
@@ -36,11 +36,11 @@ Check **True-peak limiter** to enable it. Both processing checkboxes use the sam
 
 Limiting reduces peaks independently of the rest of the track. Strong reduction can flatten transients, reduce punch or make the music sound denser. It cannot guarantee unchanged sound. The report identifies limited tracks and estimates the peak reduction so you can review them.
 
-![LUFS normalization and the optional limiter enabled](docs/screenshot-limiter.png)
+![LUFS normalization and the optional limiter enabled](docs/screenshots/1.3.0/screenshot-limiter.png)
 
 For **peak limiting only**, turn off LUFS normalization and enable the limiter. This controls peaks without boosting the track to a LUFS target. Tracks already below the ceiling are copied unchanged.
 
-![Peak limiting only, with LUFS normalization unchecked](docs/screenshot-peak-only.png)
+![Peak limiting only, with LUFS normalization unchecked](docs/screenshots/1.3.0/screenshot-peak-only.png)
 
 ### True-peak ceiling
 
@@ -52,15 +52,15 @@ Select a track, then use **Preview** when its button becomes active. Preview pro
 
 **Normal** shows green sample-peak envelopes.
 
-![Normal waveform comparison using generated stereo test audio](docs/screenshot-preview.png)
+![Normal waveform comparison using generated stereo test audio](docs/screenshots/1.3.0/screenshot-preview.png)
 
 **RGB** combines red bass, green mids and blue highs. Mixed colors show the relative energy of those frequency bands within the full waveform.
 
-![RGB waveform comparison](docs/screenshot-preview-rgb.png)
+![RGB waveform comparison](docs/screenshots/1.3.0/screenshot-preview-rgb.png)
 
 **3-band** uses a unified DJ-style waveform per channel: blue bass, orange mids and white highs. Colored layers indicate relative band energy inside the full sample-peak envelope, rather than separate frequency plots.
 
-![Layered 3-band waveform comparison](docs/screenshot-preview-3band.png)
+![Layered 3-band waveform comparison](docs/screenshots/1.3.0/screenshot-preview-3band.png)
 
 All three views retain the minimum and maximum decoded sample within each display bin. Synchronized zoom and position controls reveal finer detail; at sample zoom, the actual connected samples replace the envelope. Original and output always use the same amplitude scale. Colors are calculated from band power using 8th-order crossovers, normally 200 Hz and 2500 Hz, adapted for very low sample rates. They are visual frequency indicators, not isolated-band amplitude measurements or a reproduction of a proprietary waveform algorithm.
 
@@ -68,11 +68,13 @@ Preview outputs and decoded waveform/band files are deleted when the panel close
 
 ## Formats, encoding and metadata
 
-Supported mono/stereo audio includes **WAV/WAVE, AIFF/AIF/AIFC, FLAC, MP3, raw ADTS AAC-LC, AAC-LC in M4A/M4B/M4R/audio MP4, and Ogg Opus in OPUS/OGG/OGA**. An extension alone does not guarantee a supported encoding. HE-AAC, ALAC, WMA, Vorbis, protected files, multichannel audio and unsupported variants are rejected.
+Supported mono/stereo audio includes **WAV/WAVE, AIFF/AIF/AIFC, FLAC, MP3, raw ADTS AAC-LC, AAC-LC or 16/24-bit ALAC in M4A/M4B/M4R/audio MP4, and Ogg Opus in OPUS/OGG/OGA**. An extension alone does not guarantee a supported encoding. HE-AAC, WMA, Vorbis, protected files, multichannel audio and unsupported variants are rejected.
 
-Exports retain the source extension, supported codec, sample rate and channel count. WAV, AIFF and FLAC retain their original storage depth or floating-point format. CBR MP3 renders retain their nominal bitrate. VBR renders retain their mode and recoverable quality settings; unknown quality is estimated. AAC/Opus renders target the measured source bitrate. Variable and average bitrates can change after encoding, and the original encoder's full settings cannot always be recovered.
+Exports retain the source extension, supported codec, sample rate and channel count. WAV, AIFF, FLAC and ALAC retain their original supported bit depth; WAV/AIFF also retain supported floating-point encodings. CBR MP3 renders retain their nominal bitrate. VBR renders retain their mode and recoverable quality settings; unknown quality is estimated. AAC/Opus renders target the measured source bitrate. Variable and average bitrates can change after encoding, and the original encoder's full settings cannot always be recovered.
 
-When waveform processing is needed, OpenLUFS decodes to a **32-bit floating-point WAV**, then returns to the source format. **Re-encoding MP3, AAC or Opus introduces another lossy generation.** The intermediate preserves processing headroom but does not restore lost detail or make that encode lossless. WAV/AIFF/FLAC avoid an additional lossy codec stage; gain, limiting and integer rounding still change their samples intentionally.
+**ALAC (Apple Lossless)** supports 16-bit and 24-bit mono/stereo audio, including normalization, optional limiting and preview. Exports retain the ALAC codec, bit depth, sample rate, channels and supported MP4 metadata, including tags, artwork, private fields and chapters. Its compression is lossless, though processing and sample rounding intentionally change the audio. Compressed bitrate and file size can vary. Other ALAC depths are rejected rather than silently reduced.
+
+When waveform processing is needed, OpenLUFS decodes to a **32-bit floating-point WAV**, then returns to the source format. **Re-encoding MP3, AAC or Opus introduces another lossy generation.** The intermediate preserves processing headroom but does not restore lost detail or make that encode lossless. WAV/AIFF/FLAC/ALAC avoid an additional lossy codec stage; gain, limiting and integer rounding still change their samples intentionally.
 
 User tags, artwork and supported private metadata are retained through format-specific paths. Technical stream information, encoder delay, sample tables and checksums are regenerated where necessary. Existing playback-gain tags are retained rather than recalculated, apart from R128 references adjusted during direct Opus header gain. Players using ReplayGain, R128 or Sound Check can therefore apply additional volume changes. External DJ databases are not modified.
 
@@ -80,7 +82,7 @@ User tags, artwork and supported private metadata are retained through format-sp
 
 **Open report** shows a readable results panel rather than raw report data. It includes input/output LUFS, target differences, true peaks, processing methods, failures and track notes. You can open a previous report and export CSV, readable HTML or JSON report data.
 
-![Readable batch report with generated test tracks](docs/screenshot-report.png)
+![Readable batch report with generated test tracks](docs/screenshots/1.3.0/screenshot-report.png)
 
 Source analysis is reused while the file remains unchanged. Every export receives a verification pass. Internal rendering retries always read the original float intermediate; they do not repeatedly encode an earlier lossy output. The interface shows a steady **Processing** status during that work.
 
