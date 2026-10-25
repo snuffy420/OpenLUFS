@@ -2,7 +2,7 @@
 
 The project and release archives are prepared locally. No remote repository is selected or created by the build tools.
 
-`GitHub/OpenLUFS-1.2.1/` contains the clean upload tree. Upload its contents at the repository root, including `.github` and `.gitignore`; do not upload the enclosing versioned folder as an extra directory. Native processing executables are fetched by the build workflow and distributed with release packages, rather than committed to the repository.
+`GitHub/OpenLUFS-1.3.0/` contains the clean upload tree. Upload its contents at the repository root, including `.github` and `.gitignore`; do not upload the enclosing versioned folder as an extra directory. Native processing executables are fetched by the build workflow and distributed with release packages, rather than committed to the repository.
 
 1. Create a GitHub repository named `OpenLUFS` in your account.
 2. From the project directory, initialize Git if needed and commit the project:
@@ -14,7 +14,7 @@ git commit -m "Initial OpenLUFS release"
 ```
 
 3. Copy the remote URL from your new repository, then run `git remote add origin YOUR_REPOSITORY_URL` and `git push -u origin main`. Replace the placeholder with the actual URL.
-4. Create a draft release titled `OpenLUFS 1.2.1`, choose the tag `v1.2.1`, and upload the portable `.7z`, source `.7z`, their `.sha256`/`.sha` files, and SHA256SUMS.txt from `releases/`.
+4. Create a draft release titled `OpenLUFS 1.3.0`, choose the tag `v1.3.0`, and upload the portable `.7z`, source `.7z`, their `.sha256`/`.sha` files, and SHA256SUMS.txt from `releases/`.
 5. Preview the README and screenshots, complete listening and compatibility checks, then publish the release when ready.
 
 The binary is excluded from Git history by `.gitignore`. The source release `.7z` includes the pinned FFmpeg binary for convenience; Git checkouts fetch both tools using `tools/fetch_ffmpeg.py` and `tools/fetch_mp3rgain.py`. Build artifacts belong in GitHub Releases, rather than normal commits.

@@ -8,12 +8,13 @@ FORMAT_GROUPS = (
     ("FLAC", (".flac",)),
     ("AIFF", (".aif", ".aiff", ".aifc")),
     ("MP3", (".mp3",)),
-    ("AAC-LC", (".aac", ".m4a", ".m4b", ".m4r", ".mp4")),
+    ("AAC-LC", (".aac",)),
+    ("M4A / MP4 (AAC-LC, ALAC)", (".m4a", ".m4b", ".m4r", ".mp4")),
     ("Ogg Opus", (".opus", ".ogg", ".oga")),
 )
 SUPPORTED = {ext for _,extensions in FORMAT_GROUPS for ext in extensions}
-SUPPORTED_SUMMARY = "WAV · AIFF · FLAC · MP3 · M4A · AAC · Ogg Opus"
-SUPPORTED_DISPLAY = "WAV/WAVE · FLAC · AIF/AIFF/AIFC · MP3 · AAC/M4A/M4B/M4R/MP4 (AAC-LC) · OPUS/OGG/OGA (Opus)"
+SUPPORTED_SUMMARY = "WAV · AIFF · FLAC · ALAC · MP3 · M4A · AAC · Ogg Opus"
+SUPPORTED_DISPLAY = "WAV/WAVE · FLAC · AIF/AIFF/AIFC · MP3 · AAC (AAC-LC) · M4A/M4B/M4R/MP4 (AAC-LC, 16/24-bit ALAC) · OPUS/OGG/OGA (Opus)"
 AUDIO_FILE_FILTER = "Supported audio (" + " ".join("*"+ext for ext in sorted(SUPPORTED)) + ");;" + ";;".join(
     name + " (" + " ".join("*"+ext for ext in extensions) + ")" for name,extensions in FORMAT_GROUPS) + ";;All files (*)"
 MP4_EXTENSIONS = {".m4a", ".m4b", ".m4r", ".mp4"}

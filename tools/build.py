@@ -11,7 +11,7 @@ sys.path.insert(0,str(ROOT))
 from openlufs import __version__
 
 SOURCE_DIRS=['openlufs','assets','tools','tests','docs','licenses','vendor','.github']
-SOURCE_FILES=['norm.py','README.md','LICENSE','THIRD_PARTY_NOTICES.md','requirements.txt','requirements-build.txt','pyproject.toml','.gitignore','OpenLUFS.spec','setup.ps1','Run OpenLUFS.cmd']
+SOURCE_FILES=['norm.py','CHANGELOG.md','README.md','LICENSE','THIRD_PARTY_NOTICES.md','requirements.txt','requirements-build.txt','pyproject.toml','.gitignore','OpenLUFS.spec','setup.ps1','Run OpenLUFS.cmd']
 
 
 def run(*args):subprocess.run([sys.executable,*args],cwd=ROOT,check=True)
@@ -49,7 +49,7 @@ def package():
         stage=Path(folder).resolve()
         if not stage.is_relative_to(temp_root):raise RuntimeError('Invalid staging directory')
         portable=stage/'OpenLUFS';portable.mkdir()
-        for name in ['README.md','LICENSE','THIRD_PARTY_NOTICES.md']:
+        for name in ['README.md','CHANGELOG.md','LICENSE','THIRD_PARTY_NOTICES.md']:
             shutil.copy2(ROOT/name,portable/name)
         shutil.copy2(ROOT/'dist/OpenLUFS.exe',portable/'OpenLUFS.exe')
         for name in ['licenses','docs','assets']:shutil.copytree(ROOT/name,portable/name,ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
@@ -84,6 +84,7 @@ def main():
     if '--package-only' not in sys.argv:
         if not (ROOT/'vendor/ffmpeg.exe').exists():run('tools/fetch_ffmpeg.py')
         if not (ROOT/'vendor/mp3rgain.exe').exists():run('tools/fetch_mp3rgain.py')
+        run('tools/generate_donation_qr.py')
         run('-m','unittest','discover','-s','tests','-v')
         run('tools/render_screenshots.py')
         run('-m','PyInstaller','--clean','--noconfirm','OpenLUFS.spec')

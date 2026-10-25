@@ -57,3 +57,15 @@ STYLE += ('QComboBox::down-arrow, QDoubleSpinBox::down-arrow { width: 14px; heig
 STYLE += "QTextBrowser#AboutContent { background: #171d20; border: 1px solid #2b3538; border-radius: 8px; padding: 16px; color: #e6eceb; }"
 
 STYLE += "QPlainTextEdit#TrackDetails { background: transparent; border: none; padding: 0; }"
+
+STYLE += """
+QTabWidget#AboutTabs::pane { background: #171d20; border: 1px solid #2b3538; border-radius: 8px; top: -1px; }
+QTabBar::tab { background: #101719; color: #9eafad; border: 1px solid #2b3538; padding: 10px 16px; margin-right: 5px; border-top-left-radius: 7px; border-top-right-radius: 7px; }
+QTabBar::tab:selected { background: #18352d; color: #65e4bd; border-color: #295445; }
+QTabBar::tab:hover { color: #e6eceb; background: #222e2d; }
+QTextBrowser#HelpContent { background: #171d20; border: none; padding: 16px; color: #e6eceb; }
+QWidget#DonationPanel, QWidget#DonationPanel QLabel { background: #171d20; }
+QLineEdit#DonationAddress { font-family: 'Consolas', monospace; color: #65e4bd; font-size: 14px; }
+"""
+
+STYLE += "QWidget#WindowTitleBar, QWidget#WindowTitleBar QLabel { background: #101416; border: none; } QLabel#WindowCaption { color: #e6eceb; font-weight: 600; padding: 0 8px; }"

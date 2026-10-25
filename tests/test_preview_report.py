@@ -76,6 +76,17 @@ class PreviewReportTests(unittest.TestCase):
         dialog.reject();self.app.processEvents();self.assertFalse(folder.exists())
         self.assertTrue(source.exists())
 
+    def test_alac_preview_retains_codec_and_cleans_up(self):
+        wav=self.root/'source.wav';tone(wav,.25,2)
+        source=self.root/'source.m4a'
+        Engine().run(['-y','-i',wav,'-c:a','alac','-sample_fmt','s32p','-bits_per_raw_sample','24',source])
+        dialog=PreviewDialog(source,Settings(-24,-1),temp_parent=self.root)
+        folder=dialog.temp_path;self.wait(dialog)
+        self.assertFalse(dialog.worker.outcome.get('error'),dialog.worker.outcome)
+        self.assertEqual((dialog.result.before.codec,dialog.result.after.codec),('alac','alac'))
+        self.assertEqual(dialog.result.after.bits,24)
+        dialog.reject();self.app.processEvents();self.assertFalse(folder.exists())
+
     def test_cancelled_preview_removes_temporary_directory(self):
         source=self.root/'source.wav';tone(source,.25,3)
         dialog=PreviewDialog(source,Settings(-20,-1),temp_parent=self.root)

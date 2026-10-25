@@ -32,7 +32,7 @@ MP3 gain-floor warnings are accepted only after independent side-information che
 
 Tests exercise actual codecs and generated transient signals, source protection, cached measurements, metadata/private tags, storage depth, sample count, decoded loudness/peaks and quiet-passage behavior. GUI tests cover typed settings, persistence, resizing, scaling and worker workflows. Representative user tracks are also checked on isolated copies; the MP3 previously capped at −16.07 LUFS reached −10.06 LUFS / −0.71 dBTP at 320 kb/s with matching enabled.
 
-The archived original script is `norm-original.py.txt`. The 1.2.1 release was rebuilt and checked on Windows 10, including the compiled preview/report panels and temporary-file cleanup.
+The archived original script is `norm-original.py.txt`. The 1.3.0 release build was checked on Windows 10, including the compiled preview/report panels and temporary-file cleanup.
 
 References: [BS.1770](https://www.itu.int/rec/R-REC-BS.1770/en), [FFmpeg alimiter](https://ffmpeg.org/ffmpeg-filters.html#alimiter), [mp3rgain](https://github.com/M-Igashi/mp3rgain/tree/v3.12.1), [Opus mapping](https://www.rfc-editor.org/rfc/rfc7845.html).
 
@@ -41,3 +41,21 @@ References: [BS.1770](https://www.itu.int/rec/R-REC-BS.1770/en), [FFmpeg alimite
 The waveform preview processes an actual temporary output, decodes original/output float32 streams, and uses per-display-bin minima/maxima to retain every sample peak. Both panels share a linear amplitude scale. RGB maps relative band power to red/green/blue; 3-band layers blue/orange/white within the full-band peak envelope, with one lane per channel. Nested layer fractions are the square root of cumulative mid/high power shares. Neither mode rescales the waveform. Both use 8th-order 200/2500 Hz crossovers (adapted at low rates). These are defined signal views rather than vendor-specific waveform claims. Preview maps are closed before all temporary files are removed on normal close, cancellation or failure. Forced termination can prevent cleanup.
 
 Reports remain JSON data on disk and open in a themed parser/viewer with previous-report loading and CSV/HTML/JSON export. Target differences are displayed explicitly. Source measurements and user settings are retained where valid; output verification is never skipped.
+
+## About, Help and donations
+
+AboutDialog separates application credits, detailed processing help and optional Bitcoin donations. Help covers statuses, headroom, target differences, codec steps and failures. Donation address copying uses the owner's exact address. The static QR encodes a Bitcoin URI with no amount and is decoded independently during builds. QR generation/decoding packages are build-time only; runtime displays the PNG. The donation tab uses a fixed, responsive panel with a centered single-line address and an always-reserved footer confirmation. Optional explanatory copy is hidden on compact displays; the QR resizes while retaining its quiet zone. The primary Windows header contains one set of branding, toolbar controls and caption actions; system dragging is available from its background or branding.
+
+## MP3 bitrate modes
+
+Analysis and encoding profiles share `mp3.bitrate_properties`. Explicit CBR/VBR/ABR encoder metadata takes precedence. Missing modes trigger a complete frame-header scan: nominal bitrates, rather than frame lengths affected by padding, distinguish constant and varying streams. Only an identified Xing/Info/VBRI metadata frame is excluded; the first ordinary audio frame participates. Truncation cannot establish a CBR mode. Unmarked variable streams are handled as VBR because historical ABR intent cannot be reconstructed from frame variation. Older reports keep their recorded measurements.
+
+## ALAC
+
+Supported ALAC is mono/stereo, 16 or 24 bits, in the existing MP4 extension set. Analysis reads ALAC storage depth from the MP4 codec metadata. Constant gain renders through the ALAC encoder with the original sample format/depth and uses the same MP4 metadata restoration as matching renders. Limiter-enabled processing treats ALAC as a lossless codec, verifies depth and retains its sample count. Explicit chapter mapping preserves the chapter track, and raw user metadata/artwork/private atoms are retained. Unsupported source depths are rejected. Lossless output bitrate is not forced to the input compressed bitrate.
+
+## Parallel batches
+
+A bounded ThreadPoolExecutor schedules at most the active worker count, with serialized callbacks on the coordinator thread and results assembled in source order. Defaults cap at four tracks, reserve CPU headroom and budget 512 MiB per worker against available RAM. Explicit CLI jobs remain constrained by resource safeguards. Per-source cache locks deduplicate metering while allowing other sources to proceed; clear/discard cannot restore an in-flight invalidated entry. Shared cancellation stops new submission and joins all active cleanup before reporting completion. FFmpeg filter pools and decoder threads are constrained per job. Temporary-space reservations serialize disk-heavy jobs when capacity is insufficient.
+
+MP4 restoration reads only atom headers and movie/user metadata, turns the rendered moov into a free atom in place, then appends restored metadata. The media payload and chunk offsets remain unchanged. This avoids allocating/copying complete M4A audio files for each concurrent job. Generated mixed-format benchmarks compare serial and parallel runs and check decoded audio hashes for equality.

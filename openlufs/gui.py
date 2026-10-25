@@ -13,11 +13,10 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QHeaderView, QAbstractItemView, QProgressBar, QPlainTextEdit, QStackedWidget,
     QScrollArea, QLayout, QSizePolicy)
 from . import __version__
-from .batch import process_batch, write_report
+from .batch import process_batch, write_report, analyze_batch
 from .engine import Cancelled, Engine, resource_path
 from .models import Settings, discover, plan_outputs, SUPPORTED_DISPLAY, SUPPORTED_SUMMARY, AUDIO_FILE_FILTER
 from .theme import STYLE
-from .help import ABOUT_HTML
 from .analysis_cache import AnalysisCache
 
 
@@ -56,21 +55,8 @@ class Worker(QThread):
             if self.mode == "scan":
                 self.outcome = {"files": discover(self.files, exclude=self.output, cancel=self.cancel)}
             elif self.mode == "analyze":
-                engine, errors = Engine(self.cancel), []
-                for i, path in enumerate(self.files):
-                    if self.cancel.is_set():
-                        break
-                    self.track_update.emit(i, "Using analysis" if self.analysis_cache.get(path) is not None else "Measuring", None)
-                    try:
-                        measurement = self.analysis_cache.measure(path, engine.analyze)
-                        self.track_update.emit(i, "Analyzed", measurement)
-                    except Cancelled:
-                        self.track_update.emit(i, "Cancelled", None)
-                        break
-                    except Exception as error:
-                        errors.append(str(error))
-                        self.track_update.emit(i, "Failed", str(error))
-                self.outcome = {"errors": errors, "cancelled": self.cancel.is_set()}
+                _,errors=analyze_batch(self.files,self.cancel,self.track_update.emit,self.analysis_cache)
+                self.outcome={"errors":errors,"cancelled":self.cancel.is_set()}
             else:
                 results, errors = process_batch(self.planned, self.settings, self.cancel, self.track_update.emit, self.analysis_cache)
                 self.outcome = {"results": results, "errors": errors, "cancelled": self.cancel.is_set()}
@@ -85,6 +71,8 @@ class Worker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.custom_chrome = os.name == "nt"
+        if self.custom_chrome:self.setWindowFlag(Qt.WindowType.FramelessWindowHint,True)
         self.setWindowTitle("OpenLUFS")
         self.setWindowIcon(QIcon(str(resource_path("assets/openlufs.ico"))))
         self.resize(1220, 830)
@@ -100,6 +88,9 @@ class MainWindow(QMainWindow):
         self.config_path = (Path.home()/"Library/Application Support/OpenLUFS/settings.json"
                             if sys.platform == "darwin" else base/"OpenLUFS.settings.json")
         self.build_ui()
+        if self.custom_chrome:
+            from .window_chrome import WindowChrome
+            self.window_chrome=WindowChrome(self)
         self.load_settings()
         self._loading_settings = False
         self.refresh_processing_controls()
@@ -114,13 +105,17 @@ class MainWindow(QMainWindow):
         shell = QVBoxLayout(central)
         shell.setContentsMargins(0, 0, 0, 0)
         shell.setSpacing(0)
-        header = QWidget()
+        if self.custom_chrome:
+            from .window_chrome import TitleBar
+            header=self.title_bar=TitleBar(self)
+        else:header=QWidget()
         header.setObjectName("Header")
         self.header_layout = top = QGridLayout(header)
-        top.setContentsMargins(28, 19, 28, 19)
+        top.setContentsMargins(28, 12, 12 if self.custom_chrome else 28, 12)
         top.setHorizontalSpacing(20)
         top.setVerticalSpacing(16)
         self.brand = QWidget()
+        if self.custom_chrome:self.brand.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         brand_row = QHBoxLayout(self.brand)
         brand_row.setContentsMargins(0, 0, 0, 0)
         brand_row.setSpacing(12)
@@ -142,10 +137,12 @@ class MainWindow(QMainWindow):
         self.preview_button = button("Preview", self.preview)
         toolbar.addWidget(self.preview_button)
         toolbar.addStretch()
-        self.about_button = button("About", self.about, "Quiet")
+        self.about_button = button("About", self.about)
         top.addWidget(self.brand, 0, 0)
         top.addWidget(self.file_toolbar, 0, 1)
         top.addWidget(self.about_button, 0, 2, alignment=Qt.AlignmentFlag.AlignRight)
+        if self.custom_chrome:
+            top.addWidget(self.title_bar.window_controls,0,3,alignment=Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignTop)
         top.setColumnStretch(1, 1)
         self.header_wrapped = False
         self.arrange_header()
@@ -382,13 +379,14 @@ class MainWindow(QMainWindow):
 
     def arrange_header(self):
         minimum = (self.brand.sizeHint().width() + self.file_toolbar.minimumSizeHint().width()
-                   + self.about_button.sizeHint().width() + 96)
+                   + self.about_button.sizeHint().width() + 96
+                   + (158 if self.custom_chrome else 0))
         wrapped = self.width() < minimum
         if wrapped == self.header_wrapped:
             return
         self.header_layout.removeWidget(self.file_toolbar)
         self.header_layout.addWidget(self.file_toolbar, 1 if wrapped else 0,
-                                     0 if wrapped else 1, 1, 3 if wrapped else 1)
+                                     0 if wrapped else 1, 1, (4 if self.custom_chrome else 3) if wrapped else 1)
         self.header_wrapped = wrapped
 
     def resizeEvent(self, event):
@@ -467,6 +465,7 @@ class MainWindow(QMainWindow):
     def start_worker(self, worker):
         self.worker = worker
         self.completed_rows = set()
+        self.active_rows = set()
         for widget in self.lock_controls:
             widget.setEnabled(False)
         self.cancel_button.setEnabled(worker.mode == "normalize")
@@ -489,10 +488,14 @@ class MainWindow(QMainWindow):
     def track_event(self, row, stage, payload):
         if row >= len(self.files):
             return
+        terminal=stage in {"Analyzed","Complete","Failed","Cancelled"}
+        if terminal:
+            self.completed_rows.add(row);self.active_rows.discard(row)
+        else:self.active_rows.add(row)
         shown_stage=("Processing" if self.worker and self.worker.mode=="normalize" and stage not in {"Complete","Failed","Cancelled"} else stage)
         self.table.item(row, 5).setText(shown_stage)
         self.table.item(row, 5).setForeground(QColor("#f0b2a0" if stage == "Failed" else "#65e4bd" if stage in {"Complete", "Analyzed"} else "#a2b4ae"))
-        self.status.setText(f"{row+1} / {len(self.files)} · {self.files[row].name} · {shown_stage}")
+        self.status.setText(f"{len(self.completed_rows)} / {len(self.files)} finished · {len(self.active_rows)} active · {self.files[row].name} · {shown_stage}")
         if stage in {"Analyzed", "Source ready"}:
             self.measurement_cells(row, payload)
             self.details[str(self.files[row])] = self.describe_measurement(payload)
@@ -527,7 +530,7 @@ class MainWindow(QMainWindow):
         self.table.item(row, 4).setText(number(m.true_peak))
 
     def describe_measurement(self, m):
-        encoding=f"{m.bits}-bit" if m.codec.startswith("pcm_") or m.codec=="flac" else (f"{m.bitrate/1000:.0f} kb/s {m.bitrate_mode}" if m.bitrate else "")
+        encoding=f"{m.bits}-bit" if m.codec.startswith("pcm_") or m.codec in {"flac","alac"} else (f"{m.bitrate/1000:.0f} kb/s {m.bitrate_mode}" if m.bitrate else "")
         return f"Source: {number(m.integrated)} LUFS · {number(m.true_peak)} dBTP · LRA {number(m.loudness_range)} LU\n{m.sample_rate:,} Hz · {m.channels} channel(s) · {m.codec} · {encoding}"
 
     def show_details(self):
@@ -632,24 +635,8 @@ class MainWindow(QMainWindow):
             event.accept()
 
     def about(self):
-        dialog = QDialog(self)
-        dialog.setObjectName("AboutDialog")
-        dialog.setWindowTitle("About OpenLUFS")
-        dialog.setMinimumSize(500, 360)
-        available = self.screen().availableGeometry()
-        dialog.resize(min(720, available.width()-80), min(700, available.height()-80))
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(24, 24, 24, 20)
-        layout.setSpacing(16)
-        content = QTextBrowser()
-        content.setObjectName("AboutContent")
-        content.setOpenExternalLinks(True)
-        content.setHtml(ABOUT_HTML)
-        layout.addWidget(content)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
-        dialog.exec()
+        from .about_dialog import AboutDialog
+        AboutDialog(self).exec()
 
 
 def launch():
@@ -663,11 +650,4 @@ def launch():
     app.setStyleSheet(STYLE)
     window = MainWindow()
     window.show()
-    if os.name == "nt":
-        try:
-            import ctypes
-            value = ctypes.c_int(1)
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(int(window.winId()), 20, ctypes.byref(value), ctypes.sizeof(value))
-        except (AttributeError, OSError):
-            pass
     return app.exec()

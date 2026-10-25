@@ -87,9 +87,9 @@ def normalize_matching(engine,source,destination,settings,before,notify):
                     f'alimiter=limit={10**(internal_ceiling/20):.12f}:attack=5:release=80:level=false:latency=true',
                     f'aresample={before.sample_rate}:filter_size=64'])
                 used_limiter=True
-            engine.run(['-y','-threads','2','-i',decoded,*(['-i',source] if ext in MP4_EXTENSIONS else []),'-map','0:a:0',
+            engine.run(['-y','-threads',str(engine.threads),'-i',decoded,*(['-i',source] if ext in MP4_EXTENSIONS else []),'-map','0:a:0',
                         *(['-map_chapters','1'] if ext in MP4_EXTENSIONS else []),'-vn','-sn','-dn','-map_metadata','-1',
-                        '-af',','.join(filters),'-ar',before.sample_rate,*encoding,candidate])
+                        '-af',','.join(filters),'-ar',before.sample_rate,*encoding,'-threads',str(engine.threads),candidate])
             notify('Preserving metadata')
             restore_render_metadata(source,candidate)
             notify('Verifying export')

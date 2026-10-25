@@ -21,16 +21,31 @@ def run(destination):
             engine=Engine(); wav24=root/'24-bit.wav'
             engine.run(['-y','-i',source,'-c:a','pcm_s24le',wav24])
             pcm=engine.normalize(wav24,root/'normalized.wav',Settings(-20,-1))
+            from mutagen.mp4 import MP4
+            alac_source=root/'24-bit.m4a'
+            engine.run(['-y','-i',wav24,'-c:a','alac','-sample_fmt','s32p','-bits_per_raw_sample','24',alac_source])
+            tags=MP4(alac_source);tags['©nam']=['ALAC self-test'];tags['----:com.openlufs:cue']=[b'private data'];tags.save()
+            alac=engine.normalize(alac_source,root/'normalized.m4a',Settings(-20,-1))
+            report['alac']=alac.to_dict()
+            alac_ok=(alac.after.codec=='alac' and alac.after.bits==24 and alac.after.sample_rate==48000
+                     and alac.after.channels==1 and abs(alac.after.integrated+20)<=.100001
+                     and alac.after.true_peak<=-1 and dict(MP4(alac_source).tags)==dict(MP4(alac.destination).tags))
             mp3=root/'320.mp3'; engine.run(['-y','-i',source,'-c:a','libmp3lame','-b:a','320k',mp3])
             direct=engine.normalize(mp3,root/'normalized.mp3',Settings(-23,-1))
             opus=root/'source.opus'; engine.run(['-y','-i',source,'-c:a','libopus','-b:a','128k',opus])
             header=engine.normalize(opus,root/'normalized.opus',Settings(-23,-1))
+            from .batch import process_batch
+            import threading
+            batch_sources=[wav24,alac_source,mp3,opus]
+            concurrent,errors=process_batch([(item,root/'parallel'/item.name) for item in batch_sources],Settings(-23,-1),threading.Event(),workers=2)
+            report['parallel_batch']=(not errors and len(concurrent)==4 and
+                [Path(result.source).name for result in concurrent]==[item.name for item in batch_sources])
             report['opus']=header.to_dict()
             opus_ok=(inspect_opus(opus).audio_digest==inspect_opus(header.destination).audio_digest
                      and header.mode=='Header gain' and abs(header.after.integrated+23)<=0.100001
                      and header.after.true_peak<=-1)
             report['pcm']=pcm.to_dict(); report['mp3']=direct.to_dict()
-            report['ok']=(opus_ok and pcm.after.bits==24 and abs(pcm.after.integrated+20)<=0.100001 and pcm.after.true_peak<=-1
+            report['ok']=(report['parallel_batch'] and alac_ok and opus_ok and pcm.after.bits==24 and abs(pcm.after.integrated+20)<=0.100001 and pcm.after.true_peak<=-1
                 and abs(direct.gain_db)>1 and direct.after.bitrate==320000 and direct.mode=='Direct gain' and direct.after.true_peak<=-1
                 and mp3.stat().st_size==Path(direct.destination).stat().st_size
                 and non_audio_digest(mp3)==non_audio_digest(direct.destination))
@@ -39,8 +54,18 @@ def run(destination):
         from .theme import STYLE
         app=QApplication.instance() or QApplication([]); app.setStyle('Fusion'); app.setStyleSheet(STYLE)
         window=MainWindow(); report['qt']=True; report['assets']=not window.windowIcon().isNull()
-        report['ok']=report['ok'] and report['assets']; window.deleteLater(); app.processEvents()
+        report['window_chrome']=(not window.custom_chrome or hasattr(window,'title_bar') and len(window.window_chrome.handles)==8)
+        report['ok']=report['ok'] and report['assets'] and report['window_chrome']; window.deleteLater(); app.processEvents()
         app.setQuitOnLastWindowClosed(False)
+        from .about_dialog import AboutDialog,DONATION_BTC_ADDRESS
+        about=AboutDialog();about.show();app.processEvents()
+        report['about_help']=about.tabs.count()==3 and 'Gain capped' in about.help_content.toPlainText()
+        about.tabs.setCurrentIndex(2);app.processEvents()
+        report['donation_qr']=(about.address.text()==DONATION_BTC_ADDRESS
+                               and not about.qr_label.pixmap().isNull()
+                               and not about.tabs.tabIcon(2).isNull())
+        about.reject();report['ok']=report['ok'] and report['about_help'] and report['donation_qr']
+
         from .preview import PreviewDialog
         from .report_viewer import ReportDialog,export_report
         from PyQt6.QtCore import QEventLoop,QTimer

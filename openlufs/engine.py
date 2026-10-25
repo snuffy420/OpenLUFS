@@ -16,7 +16,7 @@ import uuid
 from .models import Measurement, Result, Settings, WAV_EXTENSIONS, AIFF_EXTENSIONS, MP4_EXTENSIONS, OPUS_EXTENSIONS
 from .ogg import inspect_opus, apply_opus_gain
 from .analysis_cache import source_stamp
-from .mp3 import silent_clamp_count
+from .mp3 import silent_clamp_count, bitrate_properties
 from .containers import restore_metadata, non_audio_digest
 import mutagen
 
@@ -48,15 +48,16 @@ def find_ffmpeg():
     raise RuntimeError("FFmpeg was not found. Run tools/fetch_ffmpeg.py or set OPENLUFS_FFMPEG.")
 
 class Engine:
-    def __init__(self, cancel=None, executable=None):
+    def __init__(self, cancel=None, executable=None, threads=2):
         self.cancel = cancel if cancel is not None else threading.Event()
         self.executable = executable or find_ffmpeg()
+        self.threads=max(1,min(32,int(threads)))
 
     def run(self, arguments, executable=None):
         if self.cancel.is_set():
             raise Cancelled()
         process = subprocess.Popen(
-            [str(executable or self.executable), *([] if executable else ["-hide_banner", "-nostdin", "-nostats"]), *map(str, arguments)],
+            [str(executable or self.executable), *([] if executable else ["-hide_banner", "-nostdin", "-nostats", "-filter_threads", str(self.threads), "-filter_complex_threads", str(self.threads), "-threads", str(self.threads)]), *map(str, arguments)],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         try:
@@ -119,10 +120,14 @@ class Engine:
             original=mutagen.File(path)
             if original is not None:
                 bitrate=int(getattr(original.info,"bitrate",0) or 0)
+                if codec=="alac":
+                    bits=int(getattr(original.info,"bits_per_sample",0) or 0)
                 mode=getattr(original.info,"bitrate_mode",None)
                 bitrate_mode=getattr(mode,"name",str(mode) if mode is not None else "").replace("BitrateMode.","")
         except Exception:
             pass
+        if codec=="mp3":
+            bitrate,bitrate_mode=bitrate_properties(path)
         if codec=="aac" and Path(path).suffix.lower()==".aac" and bitrate<=0 and seconds>0:
             from .render_formats import tag_bounds
             _,start,end=tag_bounds(path)
@@ -141,6 +146,11 @@ class Engine:
             return ['-f','wav','-c:a',before.codec,'-rf64','auto']
         if ext in AIFF_EXTENSIONS and before.codec in {'pcm_s8','pcm_s16be','pcm_s24be','pcm_s32be','pcm_f32be','pcm_f64be','pcm_s16le','pcm_s24le','pcm_s32le'}:
             return ['-f','aiff','-c:a',before.codec]
+        if ext in MP4_EXTENSIONS and before.codec=='alac':
+            if before.bits not in {16,24}:
+                raise ValueError('ALAC export supports 16-bit and 24-bit sources; other depths are rejected rather than changed.')
+            return ['-c:a','alac','-sample_fmt','s16p' if before.bits==16 else 's32p',
+                    '-bits_per_raw_sample',str(before.bits),'-f','mp4']
         if ext=='.flac':
             return ['-c:a','flac','-sample_fmt','s16' if before.bits<=16 else 's32','-bits_per_raw_sample',str(before.bits)]
         raise ValueError('No verified lossless, metadata-preserving renderer for this format. No conversion or lossy re-encoding was performed.')
@@ -220,17 +230,24 @@ class Engine:
                         raise ValueError('Original container or metadata bytes changed; export rejected.')
                 else:
                     notify('Applying gain')
-                    self.run(['-y','-threads','2','-i',source,'-map','0:a:0','-vn','-sn','-dn',
+                    self.run(['-y','-threads',str(self.threads),'-i',source,'-map','0:a:0',
+                              *(['-map_chapters','0'] if before.codec=='alac' else []),'-vn','-sn','-dn',
                               '-af',f'volume={gain:.9f}dB:precision=double','-ar',before.sample_rate,
-                              *encoding,temporary])
+                              *encoding,'-threads',str(self.threads),temporary])
                     notify('Preserving metadata')
-                    restore_metadata(source,temporary)
+                    if before.codec=='alac':
+                        from .render_formats import restore_render_metadata
+                        restore_render_metadata(source,temporary)
+                    else:
+                        restore_metadata(source,temporary)
                 notify('Verifying export')
                 after=self.analyze(temporary)
                 if not math.isfinite(after.integrated) or not math.isfinite(after.true_peak):
                     raise ValueError('Export has no measurable loudness.')
                 if (before.sample_rate,before.channels)!=(after.sample_rate,after.channels):
                     raise ValueError('Source sample rate or channel count changed; export rejected.')
+                if before.codec!=after.codec:
+                    raise ValueError('Source codec changed; export rejected.')
                 if not (direct or opus) and before.bits!=after.bits:
                     raise ValueError('Source bit depth changed; export rejected.')
                 if direct and (before.bitrate!=after.bitrate or before.bitrate_mode!=after.bitrate_mode):

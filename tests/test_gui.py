@@ -80,6 +80,21 @@ class GuiTests(unittest.TestCase):
             self.assertEqual(calls.count(path.resolve()),2,'Changed source reused stale analysis')
             self.assertIn('1 exported',self.window.status.text())
 
+    def test_parallel_results_update_the_correct_track_rows(self):
+        from openlufs.engine import Engine
+        paths=[self.folder/f'parallel-{i}.wav' for i in range(3)]
+        expected=[]
+        for path,amplitude in zip(paths,[.025,.11,.35]):
+            tone(path,amplitude=amplitude,seconds=3)
+            expected.append(Engine().analyze(path).integrated)
+        self.window.append_files(paths);self.window.target.setValue(-24)
+        self.window.normalize();self.wait()
+        self.assertIn('3 exported',self.window.status.text())
+        self.assertEqual(self.window.completed_rows,{0,1,2});self.assertEqual(self.window.active_rows,set())
+        for row,value in enumerate(expected):
+            self.assertAlmostEqual(float(self.window.table.item(row,2).text()),value,places=2)
+            self.assertAlmostEqual(float(self.window.table.item(row,3).text()),-24,delta=.100001)
+
     def test_failed_track_is_reported_without_export(self):
         path=self.folder/'silent.wav'; tone(path,amplitude=0,seconds=4)
         self.window.append_files([path]); self.window.normalize(); self.wait()
@@ -182,8 +197,9 @@ class GuiTests(unittest.TestCase):
     def test_compact_types_with_full_file_picker(self):
         from openlufs.models import SUPPORTED,AUDIO_FILE_FILTER
         displayed=self.window.supported_label.text()
-        for main in ['WAV','AIFF','FLAC','MP3','M4A','AAC','Opus']:
+        for main in ['WAV','AIFF','FLAC','ALAC','MP3','M4A','AAC','Opus']:
             self.assertIn(main,displayed)
+        self.assertIn('FLAC · ALAC',displayed)
         self.assertNotIn('M4B',displayed)
         for extension in SUPPORTED:
             self.assertIn('*'+extension,AUDIO_FILE_FILTER)
@@ -235,15 +251,50 @@ class GuiTests(unittest.TestCase):
                     if populated:
                         self.assertEqual(self.window.detail.verticalScrollBar().maximum(),0)
 
+    def test_seamless_title_bar_and_window_actions(self):
+        if not self.window.custom_chrome:self.skipTest('Windows title bar')
+        self.window.show();self.app.processEvents();bar=self.window.title_bar
+        self.assertEqual(bar.grab().toImage().pixelColor(4,4).name(),'#101416')
+        QTest.mouseClick(bar.maximize,Qt.MouseButton.LeftButton);self.app.processEvents()
+        self.assertTrue(self.window.isMaximized());self.assertEqual(bar.maximize.accessibleName(),'Restore')
+        self.assertTrue(all(not handle.isVisible() for handle in self.window.window_chrome.handles))
+        QTest.mouseClick(bar.maximize,Qt.MouseButton.LeftButton);self.app.processEvents()
+        self.assertFalse(self.window.isMaximized());self.assertEqual(bar.maximize.accessibleName(),'Maximize')
+        self.assertTrue(all(handle.isVisible() for handle in self.window.window_chrome.handles))
+        QTest.mouseClick(bar.minimize,Qt.MouseButton.LeftButton);self.app.processEvents()
+        self.assertTrue(self.window.isMinimized());self.window.showNormal();self.app.processEvents()
+        QTest.mouseClick(bar.close_button,Qt.MouseButton.LeftButton);self.app.processEvents()
+        self.assertFalse(self.window.isVisible())
+
+    def test_title_drag_and_all_resize_edges_use_system_operations(self):
+        if not self.window.custom_chrome:self.skipTest('Windows title bar')
+        from unittest.mock import patch
+        from PyQt6.QtGui import QWindow
+        self.window.show();self.app.processEvents()
+        with patch.object(QWindow,'startSystemMove',return_value=True) as move:
+            QTest.mouseClick(self.window.title_bar,Qt.MouseButton.LeftButton)
+            move.assert_called_once()
+        from PyQt6.QtWidgets import QLabel
+        self.assertEqual([label.text() for label in self.window.title_bar.findChildren(QLabel)].count('OpenLUFS'),1)
+        self.assertIs(self.window.brand.parentWidget(),self.window.title_bar)
+        self.assertEqual(len(self.window.window_chrome.handles),8)
+        for handle in self.window.window_chrome.handles:
+            with patch.object(QWindow,'startSystemResize',return_value=True) as resize:
+                QTest.mouseClick(handle,Qt.MouseButton.LeftButton)
+                resize.assert_called_once_with(handle.edges)
+
     def test_about_includes_settings_and_all_formats(self):
         from unittest.mock import patch
         from PyQt6.QtWidgets import QDialog,QTextBrowser
         def inspect(dialog):
-            browser=dialog.findChild(QTextBrowser)
+            browser=dialog.help_content
+            self.assertEqual([dialog.tabs.tabText(i) for i in range(dialog.tabs.count())],["About","Help","Donate BTC"])
             content=browser.toPlainText()
-            for text in ['LUFS','dBTP','−12','−1 dBTP','Gain capped','WAV','AIFF','FLAC','MP3','AAC','Opus','rounding','Vorbis']:
+            for text in ['LUFS','dBTP','−12','−1 dBTP','Gain capped','WAV','AIFF','FLAC','ALAC','MP3','AAC','Opus','rounding','Vorbis']:
                 self.assertIn(text,content)
             self.assertGreater(browser.document().characterCount(),1000)
+            for status in ['Gain only','Direct gain','Header gain','Gain capped','Peak limited','Limited + encoded','Re-encoded','Unchanged','Failed','Cancelled','UNKNOWN','−13.04','−10 LUFS']:
+                self.assertIn(status,content)
             return 0
         with patch.object(QDialog,'exec',inspect):
             self.window.about()

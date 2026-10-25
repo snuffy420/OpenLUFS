@@ -26,6 +26,7 @@ window.config_path=ROOT/'.test-output/screenshot-settings.json'
 window.target.setValue(-12); window.ceiling.setValue(-1)
 window.output.clear(); window.show(); app.processEvents()
 window.grab().save(str(ROOT/'docs/screenshot-library.png'))
+window.grab().save(str(ROOT/'docs/screenshot-titlebar.png'))
 with tempfile.TemporaryDirectory(prefix='screenshots-',dir=ROOT/'.test-output') as folder:
     folder=Path(folder)
     engine=Engine()
@@ -54,7 +55,9 @@ with tempfile.TemporaryDirectory(prefix='screenshots-',dir=ROOT/'.test-output') 
     with wave.open(str(transient),'wb') as audio:
         audio.setnchannels(2);audio.setsampwidth(2);audio.setframerate(rate)
         audio.writeframes(np.rint(stereo*32767).astype('<i2').tobytes())
-    window.append_files([mp3,reference,transient])
+    alac=folder/'Reference 24-bit ALAC.m4a'
+    engine.run(['-y','-i',reference,'-c:a','alac','-sample_fmt','s32p','-bits_per_raw_sample','24',alac])
+    window.append_files([mp3,reference,transient,alac])
     window.output.setText(str(folder/'Normalized'))
     window.target.setValue(-12)
     window.table.selectRow(2);app.processEvents()
@@ -70,8 +73,8 @@ with tempfile.TemporaryDirectory(prefix='screenshots-',dir=ROOT/'.test-output') 
     QTimer.singleShot(60000,loop.quit)
     loop.exec(); app.processEvents()
     if window.busy(): raise SystemExit('Screenshot processing timed out')
-    if '3 exported' not in window.status.text(): raise SystemExit(window.status.text())
-    window.table.selectRow(2); app.processEvents()
+    if '4 exported' not in window.status.text(): raise SystemExit(window.status.text())
+    window.table.selectRow(3); app.processEvents()
     window.grab().save(str(ROOT/'docs/screenshot-results.png'))
     from openlufs.report_viewer import ReportDialog
     report=ReportDialog(window.report,window);report.resize(1100,730);report.show();app.processEvents()
@@ -89,6 +92,12 @@ with tempfile.TemporaryDirectory(prefix='screenshots-',dir=ROOT/'.test-output') 
         preview.grab().save(str(ROOT/f'docs/screenshot-{name}.png'))
     path=preview.temp_path;preview.reject();app.processEvents()
     if path.exists():raise SystemExit('Screenshot preview did not clean up')
+from openlufs.about_dialog import AboutDialog
+about=AboutDialog(window);about.show();app.processEvents()
+for index,name in [(0,'about'),(1,'help'),(2,'donate')]:
+    about.tabs.setCurrentIndex(index);app.processEvents()
+    about.grab().save(str(ROOT/f'docs/screenshot-{name}.png'))
+about.reject()
 window.closing=False
 window.close()
 print('Captured empty library and verified results screenshots')

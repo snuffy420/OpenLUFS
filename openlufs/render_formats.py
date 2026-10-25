@@ -15,6 +15,7 @@ from mutagen.oggopus import OggOpus
 from .models import MP4_EXTENSIONS, OPUS_EXTENSIONS
 from .containers import restore_metadata, non_audio_digest
 from .ogg import inspect_opus, packets
+from .mp3 import bitrate_properties
 
 
 def tag_bounds(path):
@@ -50,39 +51,15 @@ def adts_samples(path):
     return samples
 
 
-def mp3_layout(source):
-    rates=[];total_bytes=0;seconds=0
-    with Path(source).open('rb') as stream:
-        stream.seek(MP3(source).info.frame_offset)
-        while True:
-            position=stream.tell();raw=stream.read(4)
-            if len(raw)!=4:break
-            header=int.from_bytes(raw,'big')
-            version=(header>>19)&3;index=(header>>12)&15;rate_index=(header>>10)&3
-            if header>>21!=2047 or version==1 or (header>>17)&3!=1 or index in {0,15} or rate_index==3:break
-            rate=[44100,48000,32000][rate_index]//(1 if version==3 else 2 if version==2 else 4)
-            table=[0,32,40,48,56,64,80,96,112,128,160,192,224,256,320] if version==3 else [0,8,16,24,32,40,48,56,64,80,96,112,128,144,160]
-            bitrate=table[index]
-            size=(144000 if version==3 else 72000)*bitrate//rate+((header>>9)&1)
-            rates.append(bitrate);total_bytes+=size;seconds+=(1152 if version==3 else 576)/rate
-            stream.seek(position+size)
-    if not rates or not seconds:raise ValueError('Cannot determine original MP3 frame bitrate settings.')
-    return set(rates[1:] or rates),round(total_bytes*8/seconds)
-
-
 def encoding_profile(source,before,engine):
     ext=source.suffix.lower()
-    if before.codec.startswith('pcm_') or (ext=='.flac' and before.codec=='flac'):
+    if before.codec.startswith('pcm_') or (ext=='.flac' and before.codec=='flac') or (ext in MP4_EXTENSIONS and before.codec=='alac'):
         return engine.pcm_encoding(source,before),{'lossy':False},[]
     notes=[]
     if ext=='.mp3' and before.codec=='mp3':
         info=MP3(source).info
-        mode=before.bitrate_mode
-        kbps=round(before.bitrate/1000)
-        if mode=='UNKNOWN':
-            rates,average=mp3_layout(source)
-            mode='CBR' if len(rates)==1 else 'VBR'
-            kbps=next(iter(rates)) if mode=='CBR' else round(average/1000)
+        bitrate,mode=bitrate_properties(source,info,strict=True)
+        kbps=round(bitrate/1000)
         if mode=='VBR':
             match=re.search(r'-V\s*(\d+(?:\.\d+)?)',info.encoder_settings)
             if match:
@@ -92,7 +69,7 @@ def encoding_profile(source,before,engine):
                 quality=min(range(10),key=lambda q:abs(candidates[q]-kbps))
                 notes.append('Original VBR quality was unavailable; the nearest LAME VBR quality was estimated from the source bitrate.')
             args=['-c:a','libmp3lame','-q:a',str(quality),'-compression_level','0']
-            profile={'lossy':True,'mode':'VBR','quality':quality,'source_bitrate':before.bitrate}
+            profile={'lossy':True,'mode':'VBR','quality':quality,'source_bitrate':bitrate}
             notes.append('VBR encoding mode is retained; average bitrate and file size can change after re-encoding.')
         else:
             # Mutagen reports UNKNOWN for many CBR files without a Xing/Info tag.
@@ -101,8 +78,8 @@ def encoding_profile(source,before,engine):
             if mode!='ABR' and abs(nominal-kbps)>1:
                 raise ValueError('The original MP3 bitrate cannot be reproduced by the bundled encoder.')
             if mode=='ABR':
-                args=['-c:a','libmp3lame','-abr','1','-b:a',str(before.bitrate),'-compression_level','0']
-                profile={'lossy':True,'mode':'ABR','target_bitrate':before.bitrate}
+                args=['-c:a','libmp3lame','-abr','1','-b:a',str(bitrate),'-compression_level','0']
+                profile={'lossy':True,'mode':'ABR','target_bitrate':bitrate}
             else:
                 args=['-c:a','libmp3lame','-b:a',f'{nominal}k','-compression_level','0']
                 profile={'lossy':True,'mode':'CBR','target_bitrate':nominal*1000}
@@ -150,25 +127,58 @@ def box(kind,payload):
     return struct.pack('>I4s',len(payload)+8,kind)+payload
 
 
+def file_atoms(path):
+    """Read MP4 root headers without loading the media payload into memory."""
+    with Path(path).open('rb') as stream:
+        stream.seek(0,2);end=stream.tell();position=0
+        while position<end:
+            stream.seek(position);raw=stream.read(8);header=8
+            if len(raw)!=8:raise ValueError('Truncated MP4 metadata atom.')
+            size=int.from_bytes(raw[:4],'big')
+            if size==1:
+                extended=stream.read(8);header=16
+                if len(extended)!=8:raise ValueError('Truncated extended MP4 atom.')
+                size=int.from_bytes(extended,'big')
+            elif size==0:size=end-position
+            if size<header or position+size>end:raise ValueError('Invalid MP4 metadata atom.')
+            yield raw[4:8],position,size,header,raw[:4]==bytes(4)
+            position+=size
+
+
 def mp4_metadata(source,rendered):
-    # Keep media data in place: replace the old moov with equal-sized free space,
-    # append the new moov, and retain its existing chunk offsets unchanged.
-    old=Path(source).read_bytes();new=Path(rendered).read_bytes()
-    old_atoms=list(atoms(old));new_atoms=list(atoms(new))
-    old_moov=next((data[h:] for kind,data,h in old_atoms if kind==b'moov'),None)
-    new_moov=next((data[h:] for kind,data,h in new_atoms if kind==b'moov'),None)
-    if old_moov is None or new_moov is None: raise ValueError('MP4 movie metadata is missing.')
+    # Media stays in place. Change the rendered moov into a free atom, then append
+    # its rebuilt metadata. Existing audio/chapter chunk offsets remain valid.
+    source,rendered=Path(source),Path(rendered)
+    old_atoms=list(file_atoms(source));new_atoms=list(file_atoms(rendered))
+    def movie(path,items):
+        item=next((entry for entry in items if entry[0]==b'moov'),None)
+        if item is None:raise ValueError('MP4 movie metadata is missing.')
+        _,position,size,header,_=item
+        with path.open('rb') as stream:
+            stream.seek(position+header);return stream.read(size-header)
+    old_moov=movie(source,old_atoms);new_moov=movie(rendered,new_atoms)
     metadata={b'udta',b'meta',b'uuid'}
     technical={b'mvhd',b'trak',b'mvex',b'iods',b'free',b'skip'}
     preserved=[data for kind,data,_ in atoms(old_moov) if kind not in technical]
     body=b''.join(data for kind,data,_ in atoms(new_moov) if kind not in metadata)+b''.join(preserved)
     excluded={b'ftyp',b'styp',b'moov',b'mdat',b'free',b'skip',b'wide',b'sidx',b'mfra',b'moof',b'pdin',b'prft'}
-    root_metadata=[data for kind,data,_ in old_atoms if kind not in excluded]
-    with Path(rendered).open('wb') as out:
-        for kind,data,h in new_atoms:
-            out.write(box(b'free',bytes(len(data)-8)) if kind==b'moov' else data)
-        out.write(box(b'moov',body))
-        for data in root_metadata:out.write(data)
+    for _,_,size,_,open_ended in new_atoms:
+        if open_ended and size>0xffffffff:
+            raise ValueError('Cannot safely append metadata after an oversized open-ended MP4 atom.')
+    with rendered.open('r+b') as out,source.open('rb') as original:
+        for kind,position,size,_,open_ended in new_atoms:
+            if open_ended:
+                out.seek(position);out.write(size.to_bytes(4,'big'))
+            if kind==b'moov':
+                out.seek(position+4);out.write(b'free')
+        out.seek(0,2);out.write(box(b'moov',body))
+        for kind,position,size,_,_ in old_atoms:
+            if kind in excluded:continue
+            original.seek(position);remaining=size
+            while remaining:
+                chunk=original.read(min(1024*1024,remaining))
+                if not chunk:raise ValueError('Truncated MP4 user metadata.')
+                out.write(chunk);remaining-=len(chunk)
     if dict(MP4(source).tags or {})!=dict(MP4(rendered).tags or {}):
         raise ValueError('MP4 user metadata changed; export rejected.')
 
