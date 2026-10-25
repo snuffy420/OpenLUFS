@@ -103,3 +103,14 @@ The CLI offers the same processing engine. See `python -m openlufs normalize --h
 Developer-only build instructions are in [docs/BUILDING.md](docs/BUILDING.md). Tests cover actual codecs, metadata/depth retention, constant gain, optional limiting, target verification, analysis caching, waveform extrema and frequency bands, preview cleanup, report exports and GUI workflows. Generated test signals do not replace listening tests with your own library.
 
 OpenLUFS is licensed GPL-3.0-or-later. See [LICENSE](LICENSE), [third-party notices](THIRD_PARTY_NOTICES.md) and [publishing notes](docs/PUBLISHING.md).
+
+## Support OpenLUFS
+
+<img src="assets/bitcoin.svg" width="24" height="24" alt="Bitcoin">
+
+If OpenLUFS is useful to you, consider supporting its development with a Bitcoin donation. Donations are optional and appreciated.
+
+**Bitcoin (BTC):**
+`bc1qz8877p6vusc22qrctdj4h7w0uk2l9l9h8lwphy`
+
+You can also scan the QR code in **About → Donate BTC**.
